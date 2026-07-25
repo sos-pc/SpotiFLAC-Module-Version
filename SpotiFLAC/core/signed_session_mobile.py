@@ -70,6 +70,33 @@ _BROWSER_FINGERPRINT_HEADERS = {
 _LOCAL_CALLBACK_HOST = "127.0.0.1"
 _LOCAL_CALLBACK_PATH = "/callback"
 _MANUAL_GRANT_TIMEOUT_S = 300  # 5 minutes to paste the grant
+_SOLVER_GRANT_TIMEOUT_S = 45    # solver timeout per attempt
+
+
+async def _solver_grant_async(challenge_url: str, timeout: float = _SOLVER_GRANT_TIMEOUT_S) -> str:
+    """Call the external solver (turnstile-solver) to obtain a grant token.
+
+    Used when stdin is not a TTY (Docker container without stdin_open).
+    Reads TURNSTILE_SOLVER_URL from the environment.
+    """
+    solver_url = os.environ.get("TURNSTILE_SOLVER_URL", "").rstrip("/")
+    if not solver_url:
+        raise RuntimeError(
+            "TURNSTILE_SOLVER_URL is not set, cannot auto-solve challenge"
+        )
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+        resp = await client.post(
+            f"{solver_url}/grant",
+            json={"challenge_url": challenge_url},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        grant = (data.get("grant") or "").strip()
+        if not grant:
+            raise RuntimeError(
+                f"solver returned no grant: {data.get('error', 'unknown')}"
+            )
+        return grant
 
 
 class SignedSessionClient:
@@ -423,6 +450,8 @@ class SignedSessionClient:
 
         if grant_input is not None:
             grant_awaitable = asyncio.to_thread(grant_input)
+        elif not sys.stdin.isatty():
+            grant_awaitable = _solver_grant_async(challenge_url)
         else:
             grant_awaitable = asyncio.to_thread(
                 input,

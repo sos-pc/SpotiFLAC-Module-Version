@@ -180,7 +180,28 @@ def clear_community_session_credentials() -> None:
 def _run_manual_terminal_verification(challenge_url: str) -> str:
     """Fallback da terminale (o Docker/Telegram).
     Mostra l'URL e attende l'input dell'utente su sys.stdin.
+
+    When stdin is not a TTY (Docker container), attempts to use the
+    external solver (TURNSTILE_SOLVER_URL) before giving up.
     """
+    if not sys.stdin.isatty():
+        solver_url = os.environ.get("TURNSTILE_SOLVER_URL", "").rstrip("/")
+        if solver_url:
+            try:
+                resp = requests.post(
+                    f"{solver_url}/grant",
+                    json={"challenge_url": challenge_url},
+                    timeout=45,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                grant = (data.get("grant") or "").strip()
+                if grant:
+                    return grant
+            except Exception as e:
+                logger.warning(
+                    "solver fallback failed for community session: %s", e
+                )
     try:
         grant = input(
             "Incolla qui il grant (da DevTools → Network → verify → Preview → field 'grant'): ",
