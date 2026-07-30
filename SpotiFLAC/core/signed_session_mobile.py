@@ -24,25 +24,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def is_docker() -> bool:
-    """Determine whether the process is running inside a Docker container.
-
-    Returns:
-        bool: `True` if Docker container indicators are detected, `False` otherwise.
-
-    """
-    cgroup_path = "/proc/1/cgroup"
-    if os.path.exists("/.dockerenv"):
-        return True
-    if os.path.isfile(cgroup_path):
-        try:
-            with open(cgroup_path) as f:
-                return any("docker" in line for line in f)
-        except OSError:
-            return False
-    return False
-
-
 _DEFAULT_ENDPOINTS = {
     "bootstrap": "/bootstrap",
     "challenge": "/challenge",
@@ -70,10 +51,12 @@ _BROWSER_FINGERPRINT_HEADERS = {
 _LOCAL_CALLBACK_HOST = "127.0.0.1"
 _LOCAL_CALLBACK_PATH = "/callback"
 _MANUAL_GRANT_TIMEOUT_S = 300  # 5 minutes to paste the grant
-_SOLVER_GRANT_TIMEOUT_S = 45    # solver timeout per attempt
+_SOLVER_GRANT_TIMEOUT_S = 45  # solver timeout per attempt
 
 
-async def _solver_grant_async(challenge_url: str, timeout: float = _SOLVER_GRANT_TIMEOUT_S) -> str:
+async def _solver_grant_async(
+    challenge_url: str, timeout: float = _SOLVER_GRANT_TIMEOUT_S
+) -> str:
     """Call the external solver (turnstile-solver) to obtain a grant token.
 
     Used when stdin is not a TTY (Docker container without stdin_open).
@@ -963,17 +946,7 @@ async def perform_signed_fetch(
                 client._load()
 
                 if not client.authenticated:
-                    running_in_docker = is_docker()
                     try:
-                        if running_in_docker:
-                            msg = (
-                                "ambiente Docker rilevato: skip diretto al flusso "
-                                "manuale (authenticate_with_turnstile richiede un "
-                                "browser reale non disponibile/affidabile in container)"
-                            )
-                            raise RuntimeError(
-                                msg,
-                            )
                         if use_turnstile_browser:
                             await client.authenticate_with_turnstile(
                                 timeout=min(timeout, 90),
@@ -982,20 +955,12 @@ async def perform_signed_fetch(
                             msg = "turnstile automation disabled"
                             raise RuntimeError(msg)
                     except Exception as exc:
-                        if running_in_docker:
-                            logger.info(
-                                "[signed_session:%s] Docker rilevato, uso il flusso "
-                                "manuale (%s).",
-                                client.namespace,
-                                exc,
-                            )
-                        else:
-                            logger.info(
-                                "[signed_session:%s] Turnstile automatico fallito (%s), "
-                                "fallback al flusso manuale.",
-                                client.namespace,
-                                exc,
-                            )
+                        logger.info(
+                            "[signed_session:%s] Turnstile automatico fallito (%s), "
+                            "fallback al flusso manuale.",
+                            client.namespace,
+                            exc,
+                        )
                         try:
                             await client.authenticate_with_manual_grant(
                                 on_verification_url=on_verification_url,
